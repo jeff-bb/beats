@@ -2561,6 +2561,17 @@ processors:
             ctx.user.target.put("domain", domain);
           }
         }
+        if (ctx?.winlog?.event_data?.MemberSid != null) {
+          if (ctx?.user == null) {
+            HashMap hm = new HashMap();
+            ctx.put("user", hm);
+          }
+          if (ctx?.user?.target == null){
+            HashMap hm = new HashMap();
+            ctx.user.put("target", hm);
+          }
+          ctx.user.target.put("id", ctx?.winlog?.event_data?.MemberSid);
+        }
         if (ctx?.winlog?.event_data?.TargetUserSid != null) {
           if (ctx?.group == null) {
             HashMap hm = new HashMap();
