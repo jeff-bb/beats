@@ -1,25 +1,6 @@
 ---
 description: Pipeline for Windows Powershell events
 processors:
-  - kv:
-      description: Split Event 800 event data fields.
-      field: winlog.event_data.param2
-      target_field: winlog.event_data
-      field_split: "\n\t"
-      trim_key: "\n\t"
-      trim_value: "\n\t"
-      value_split: "="
-      if: ctx?.winlog?.event_id == "800"
-  - kv:
-      description: Split Events 4xx and 600 event data fields.
-      field: winlog.event_data.param3
-      target_field: winlog.event_data
-      field_split: "\n\t"
-      trim_key: "\n\t"
-      trim_value: "\n\t"
-      value_split: "="
-      if: ctx?.winlog?.event_id != "800"
-
   ## ECS and Event fields.
 
   - set:
@@ -37,7 +18,6 @@ processors:
         - ISO8601
       ignore_failure: true
       if: ctx?.winlog?.time_created != null
-
   - set:
       field: event.module
       value: powershell
@@ -63,37 +43,41 @@ processors:
       value: info
       if: ctx?.event?.type == null
   - convert:
-      field: winlog.event_data.SequenceNumber
-      target_field: event.sequence
-      type: long
-      ignore_failure: true 
-      ignore_missing: true
-  - convert:
       field: winlog.record_id
       type: string
       ignore_failure: true 
       ignore_missing: true
 
-  ## Process fields.
+  ## Parse param2 Blob
 
-  - rename:
-      field: winlog.event_data.HostId
-      target_field: process.entity_id
+  - grok:
+      field: winlog.event_data.param2
+      description: Split Event 800 param2, attempting to include HostApplication but skipping if we can't match.
+      tag: Split Event 800 param2
+      patterns:
+        - '\s+DetailSequence=%{NUMBER:powershell.sequence:long}\n\s+DetailTotal=%{NUMBER:powershell.total:long}\n\s+SequenceNumber=%{NUMBER:event.sequence:long}\n\s+UserId=%{DATA:winlog.event_data.UserId}\n\s+HostName=%{DATA:process.title}\n\s+HostVersion=%{DATA:powershell.process.executable_version}\n\s+HostId=%{DATA:process.entity_id}\n\s+HostApplication=%{GREEDYDATA:process.command_line}\n\s+EngineVersion=%{DATA:powershell.engine.version}\n\s+RunspaceId=%{DATA:powershell.runspace_id}\n\s+PipelineId=%{DATA:powershell.pipeline_id}\n\s+ScriptName=%{GREEDYDATA:winlog.event_data.ScriptName}\n\s+CommandLine=%{DATA:powershell.command.type}.*'
+        - '\s+DetailSequence=%{NUMBER:powershell.sequence:long}\n\s+DetailTotal=%{NUMBER:powershell.total:long}\n\s+SequenceNumber=%{NUMBER:event.sequence:long}\n\s+UserId=%{DATA:winlog.event_data.UserId}\n\s+HostName=%{DATA:process.title}\n\s+HostVersion=%{DATA:powershell.process.executable_version}\n\s+HostId=%{DATA:process.entity_id}\n\s+.*'
       ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostId != ""
-  - rename:
-      field: winlog.event_data.HostApplication
-      target_field: process.command_line
+      if: ctx?.event.code == "800"
+
+  - grok:
+      field: winlog.event_data.param2
+      description: Split Event 800 param2, bypassing parsed fields and problematic HostApplication.
+      tag: Split Event 800 param2 skip HostApplication
+      patterns:
+        - 'EngineVersion=%{DATA:powershell.engine.version}\n\s+RunspaceId=%{DATA:powershell.runspace_id}\n\s+PipelineId=%{DATA:powershell.pipeline_id}\n\s+ScriptName=%{GREEDYDATA:winlog.event_data.ScriptName}\n\s+CommandLine=%{GREEDYDATA:powershell.command.type}'
       ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostApplication != ""
-  - rename:
-      field: winlog.event_data.HostName
-      target_field: process.title
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostName != ""
+      if: ctx?.event.code == "800" && ctx?.process?.command_line == null
+
+  - kv:
+      description: Split Events 4xx and 600 event data fields.
+      field: winlog.event_data.param3
+      target_field: winlog.event_data
+      field_split: "\n\t"
+      trim_key: "\n\t"
+      trim_value: "\n\t"
+      value_split: "="
+      if: ctx?.winlog?.event_id != "800"
 
   ## User fields.
 
@@ -147,44 +131,6 @@ processors:
       ignore_failure: true
       ignore_missing: true
       if: ctx?.winlog?.event_data?.ProviderName != ""
-  - convert:
-      field: winlog.event_data.DetailTotal
-      target_field: powershell.total
-      type: long
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.DetailTotal != ""
-  - convert:
-      field: winlog.event_data.DetailSequence
-      target_field: powershell.sequence
-      type: long
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.DetailSequence != ""
-  - rename:
-      field: winlog.event_data.EngineVersion
-      target_field: powershell.engine.version
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.EngineVersion != ""
-  - rename:
-      field: winlog.event_data.PipelineId
-      target_field: powershell.pipeline_id
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.PipelineId != ""
-  - rename:
-      field: winlog.event_data.RunspaceId
-      target_field: powershell.runspace_id
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.RunspaceId != ""
-  - rename:
-      field: winlog.event_data.HostVersion
-      target_field: powershell.process.executable_version
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.HostVersion != ""
   - rename:
       field: winlog.event_data.CommandLine
       target_field: powershell.command.value
@@ -374,6 +320,8 @@ processors:
         ctx.process.args = commandLineToArgv(ctx.process.command_line);
         ctx.process.args_count = ctx.process.args.length;
  
+  ## File Fields
+
   - script:
       description: Adds file information.
       lang: painless
@@ -417,9 +365,30 @@ processors:
       ignore_missing: true
       ignore_failure: true
   - script:
-      description: Remove all empty values from event_data.
+      description: Recursively remove all empty values from specific nodes.
       lang: painless
-      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      source: |-
+        void removeEmptyValues(Map map) {
+          map.entrySet().removeIf(entry -> {
+            if (entry.getValue() instanceof Map) {
+              removeEmptyValues((Map) entry.getValue());
+              return ((Map) entry.getValue()).isEmpty();
+            } else if (entry.getValue() instanceof List) {
+              ((List) entry.getValue()).removeIf(item -> item == null || item.equals(""));
+              return ((List) entry.getValue()).isEmpty();
+            } else {
+              return entry.getValue() == null || entry.getValue().equals("");
+            }
+          });
+        }
+
+        if (ctx?.winlog?.event_data != null) {
+          removeEmptyValues(ctx.winlog?.event_data);
+        }
+
+        if (ctx?.powershell != null) {
+          removeEmptyValues(ctx.powershell);
+        }
   - remove:
       description: Remove empty event data.
       field: winlog.event_data
@@ -430,4 +399,5 @@ processors:
 on_failure:
   - set:
       field: "error.message"
-      value: "{{ _ingest.on_failure_message }}"
+      value: |-
+        Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{ _ingest.on_failure_processor_tag }}" in pipeline "{{ _ingest.on_failure_pipeline }}" failed with message "{{ _ingest.on_failure_message }}"

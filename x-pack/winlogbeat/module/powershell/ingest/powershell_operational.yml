@@ -1,27 +1,6 @@
 ---
 description: Pipeline for Windows Powershell/Operational events
 processors:
-  - kv:
-      description: Split Event 4103 event data fields.
-      field: winlog.event_data.ContextInfo
-      target_field: winlog.event_data
-      field_split: "\n"
-      trim_key: " \n\t"
-      trim_value: " \n\t"
-      value_split: "="
-      if: ctx?.winlog?.event_id == "4103"
-  - script:
-      description: Remove spaces from all event_data keys.
-      lang: painless
-      if: ctx?.winlog?.event_data != null
-      source: |-
-        def newEventData = new HashMap();
-        for (entry in ctx.winlog.event_data.entrySet()) {
-          def newKey = /\s/.matcher(entry.getKey().toString()).replaceAll("");
-          newEventData.put(newKey, entry.getValue());
-        }
-        ctx.winlog.event_data = newEventData;
-
   ## ECS and Event fields.
 
   - set:
@@ -39,7 +18,6 @@ processors:
         - ISO8601
       ignore_failure: true
       if: ctx?.winlog?.time_created != null
-
   - set:
       field: event.module
       value: powershell
@@ -65,37 +43,22 @@ processors:
       value: info
       if: ctx?.event?.type == null
   - convert:
-      field: winlog.event_data.SequenceNumber
-      target_field: event.sequence
-      type: long
-      ignore_failure: true 
-      ignore_missing: true
-  - convert:
       field: winlog.record_id
       type: string
       ignore_failure: true 
       ignore_missing: true
 
-  ## Process fields.
+  ## Parse ContextInfo Blob
 
-  - rename:
-      field: winlog.event_data.HostID
-      target_field: process.entity_id
+  - grok:
+      field: "winlog.event_data.ContextInfo"
+      description: Split Event 4103 ContextInfo
+      tag: Split Event 4103 ContextInfo
+      patterns:
+        - '\s+Severity = %{DATA:winlog.event_data.Severity}\n\s+Host Name = %{DATA:process.title}\n\s+Host Version = %{DATA:powershell.process.executable_version}\n\s+Host ID = %{DATA:process.entity_id}\n\s+Host Application = %{GREEDYDATA:process.command_line}\n\s+Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Connected User = %{DATA:winlog.event_data.ConnectedUser}\n\s+Shell ID = %{DATA:powershell.id}.*'
+        - '\s+Severity = %{DATA:winlog.event_data.Severity}\n\s+Host Name = %{DATA:process.title}\n\s+Host Version = %{DATA:powershell.process.executable_version}\n\s+Host ID = %{DATA:process.entity_id}\n\s+Host Application = %{GREEDYDATA:process.command_line}\n\s+Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Shell ID = %{DATA:powershell.id}.*'
       ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostID != ""
-  - rename:
-      field: winlog.event_data.HostApplication
-      target_field: process.command_line
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostApplication != ""
-  - rename:
-      field: winlog.event_data.HostName
-      target_field: process.title
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.HostName != ""
+      if: ctx?.event.code == "4103"
 
   ## User fields.
 
@@ -178,77 +141,11 @@ processors:
   ## PowerShell fields.
 
   - convert:
-      field: winlog.event_data.MessageNumber
-      target_field: powershell.sequence
-      type: long
-      ignore_failure: true 
-      ignore_missing: true
-  - convert:
       field: winlog.event_data.MessageTotal
       target_field: powershell.total
       type: long
       ignore_failure: true 
       ignore_missing: true
-  - rename:
-      field: winlog.event_data.ShellID
-      target_field: powershell.id
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.ShellID != ""
-  - rename:
-      field: winlog.event_data.EngineVersion
-      target_field: powershell.engine.version
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.EngineVersion != ""
-  - rename:
-      field: winlog.event_data.PipelineID
-      target_field: powershell.pipeline_id
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.PipelineID != ""
-  - rename:
-      field: winlog.event_data.RunspaceID
-      target_field: powershell.runspace_id
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.RunspaceID != ""
-  - rename:
-      field: winlog.event_data.RunspaceId
-      target_field: powershell.runspace_id
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.RunspaceId != ""
-  - rename:
-      field: winlog.event_data.HostVersion
-      target_field: powershell.process.executable_version
-      ignore_missing: true
-      ignore_failure: true
-      if: ctx?.winlog?.event_data?.HostVersion != ""
-  - rename:
-      field: winlog.event_data.CommandLine
-      target_field: powershell.command.value
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.CommandLine != ""
-  - rename:
-      field: winlog.event_data.CommandPath
-      target_field: powershell.command.path
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.CommandPath != ""
-  - rename:
-      field: winlog.event_data.CommandName
-      target_field: powershell.command.name
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.CommandName != ""
-  - rename:
-      field: winlog.event_data.CommandType
-      target_field: powershell.command.type
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.CommandType != ""
   - rename:
       field: winlog.event_data.ScriptBlockId
       target_field: powershell.file.script_block_id
@@ -263,7 +160,8 @@ processors:
       if: ctx?.winlog?.event_data?.ScriptBlockText != ""
 
   - split:
-      description: Split Event 800 command invocation details.
+      description: Split Event 4103 Payload details
+      tag: Split Event 4103 Payload details
       field: winlog.event_data.Payload
       separator: "\n"
       ignore_failure: true
@@ -301,10 +199,15 @@ processors:
             }                
             
             if (matches[1] != "ParameterBinding") {
+                // Cleanup quotes around name and value.
+                def value = matches[3] != null ? matches[3].trim() : "";
+                if (value.length() > 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                    value = value.substring(1, value.length() - 1);
+                }
                 return [
                     "type": matches[1], 
                     "related_command": matches[2], 
-                    "value": matches[3]
+                    "value": value
                 ];
             }
 
@@ -319,12 +222,23 @@ processors:
             if (nameValMatches.length !== 3) {
                 return ["value": matches[3]];
             }
+            
+            // Cleanup quotes around name and value.
+            def paramName = nameValMatches[1].trim();
+            if (paramName.length() > 2 && paramName.startsWith("\"") && paramName.endsWith("\"")) {
+                paramName = paramName.substring(1, paramName.length() - 1);
+            }
+
+            def paramValue = nameValMatches[2].trim();
+            if (paramValue.length() > 2 && paramValue.startsWith("\"") && paramValue.endsWith("\"")) {
+                paramValue = paramValue.substring(1, paramValue.length() - 1);
+            }
 
             return [
                 "type": matches[1],
                 "related_command": matches[2],
-                "name": nameValMatches[1],
-                "value": nameValMatches[2]
+                "name": paramName,
+                "value": paramValue
             ];
         }
 
@@ -426,12 +340,8 @@ processors:
         ctx.process.args = commandLineToArgv(ctx.process.command_line);
         ctx.process.args_count = ctx.process.args.length;
  
-  - rename:
-      field: winlog.event_data.Path
-      target_field: winlog.event_data.ScriptName
-      ignore_failure: true
-      ignore_missing: true
-      if: ctx?.winlog?.event_data?.Path != ""
+  ## File Fields
+
   - script:
       description: Adds file information.
       lang: painless
@@ -458,12 +368,55 @@ processors:
       ignore_missing: true
       if: ctx?.winlog?.event_data?.ScriptName != ""
 
+  - script:
+      description: Use CommandPath if ScriptName is empty.
+      tag: Use CommandPath if ScriptName is empty
+      lang: painless
+      if: ctx?.file?.path == null && ctx?.powershell?.command?.path != null && ctx.powershell.command.path.length() > 1
+      source: |-
+        def path = ctx.powershell.command.path;
+        def idx = path.lastIndexOf("\\");
+        if (idx > -1) {
+            if (ctx?.file == null) {
+                ctx.file = new HashMap();
+            }
+            ctx.file.path = path;
+            ctx.file.name = path.substring(idx+1);
+            ctx.file.directory = path.substring(0, idx);
+
+            def extIdx = path.lastIndexOf(".");
+            if (extIdx > -1) {
+                ctx.file.extension = path.substring(extIdx+1);
+            }
+        }
+
+  - script:
+      description: Process ScriptBlock File Path
+      tag: Process ScriptBlock File Path
+      lang: painless
+      if: ctx?.winlog?.event_data?.Path != null && ctx?.winlog?.event_data?.Path.length() > 1
+      source: |-
+        def path = ctx.winlog.event_data.Path;
+        def idx = path.lastIndexOf("\\");
+        if (idx > -1) {
+            if (ctx?.file == null) {
+                ctx.file = new HashMap();
+            }
+            ctx.file.path = path;
+            ctx.file.name = path.substring(idx+1);
+            ctx.file.directory = path.substring(0, idx);
+
+            def extIdx = path.lastIndexOf(".");
+            if (extIdx > -1) {
+                ctx.file.extension = path.substring(extIdx+1);
+            }
+        }
+
   ## Cleanup.
 
   - remove:
       field:
         - _temp
-        - winlog.event_data.SequenceNumber
         - winlog.event_data.User
         - winlog.event_data.ConnectedUser
         - winlog.event_data.ContextInfo
@@ -476,9 +429,30 @@ processors:
       ignore_missing: true
       ignore_failure: true
   - script:
-      description: Remove all empty values from event_data.
+      description: Recursively remove all empty values from specific nodes.
       lang: painless
-      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      source: |-
+        void removeEmptyValues(Map map) {
+          map.entrySet().removeIf(entry -> {
+            if (entry.getValue() instanceof Map) {
+              removeEmptyValues((Map) entry.getValue());
+              return ((Map) entry.getValue()).isEmpty();
+            } else if (entry.getValue() instanceof List) {
+              ((List) entry.getValue()).removeIf(item -> item == null || item.equals(""));
+              return ((List) entry.getValue()).isEmpty();
+            } else {
+              return entry.getValue() == null || entry.getValue().equals("");
+            }
+          });
+        }
+
+        if (ctx?.winlog?.event_data != null) {
+          removeEmptyValues(ctx.winlog?.event_data);
+        }
+
+        if (ctx?.powershell != null) {
+          removeEmptyValues(ctx.powershell);
+        }
   - remove:
       description: Remove empty event data.
       field: winlog.event_data
@@ -489,4 +463,5 @@ processors:
 on_failure:
   - set:
       field: "error.message"
-      value: "{{ _ingest.on_failure_message }}"
+      value: |-
+        Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{ _ingest.on_failure_processor_tag }}" in pipeline "{{ _ingest.on_failure_pipeline }}" failed with message "{{ _ingest.on_failure_message }}"
