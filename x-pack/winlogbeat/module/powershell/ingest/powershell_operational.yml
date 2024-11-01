@@ -57,6 +57,17 @@ processors:
       patterns:
         - '\s+Severity = %{DATA:winlog.event_data.Severity}\n\s+Host Name = %{DATA:process.title}\n\s+Host Version = %{DATA:powershell.process.executable_version}\n\s+Host ID = %{DATA:process.entity_id}\n\s+Host Application = %{GREEDYDATA:process.command_line}\n\s+Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Connected User = %{DATA:winlog.event_data.ConnectedUser}\n\s+Shell ID = %{DATA:powershell.id}.*'
         - '\s+Severity = %{DATA:winlog.event_data.Severity}\n\s+Host Name = %{DATA:process.title}\n\s+Host Version = %{DATA:powershell.process.executable_version}\n\s+Host ID = %{DATA:process.entity_id}\n\s+Host Application = %{GREEDYDATA:process.command_line}\n\s+Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Shell ID = %{DATA:powershell.id}.*'
+        - '\s+Severity = %{DATA:winlog.event_data.Severity}\n\s+Host Name = %{DATA:process.title}\n\s+Host Version = %{DATA:powershell.process.executable_version}\n\s+Host ID = %{DATA:process.entity_id}.*'
+      ignore_failure: true
+      if: ctx?.event.code == "4103"
+
+  - grok:
+      field: "winlog.event_data.ContextInfo"
+      description: Split Event 4103 ContextInfo
+      tag: Split Event 4103 ContextInfo
+      patterns:
+        - 'Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Connected User = %{DATA:winlog.event_data.ConnectedUser}\n\s+Shell ID = %{DATA:powershell.id}.*'
+        - 'Engine Version = %{DATA:powershell.engine.version}\n\s+Runspace ID = %{DATA:powershell.runspace_id}\n\s+Pipeline ID = %{DATA:powershell.pipeline_id}\n\s+Command Name = %{DATA:powershell.command.name}\n\s+Command Type = %{DATA:powershell.command.type}\n\s+Script Name = %{GREEDYDATA:winlog.event_data.ScriptName}\n\s+Command Path = %{DATA:powershell.command.path}\n\s+Sequence Number = %{NUMBER:event.sequence:long}\n\s+User = %{DATA:winlog.event_data.User}\n\s+Shell ID = %{DATA:powershell.id}.*'
       ignore_failure: true
       if: ctx?.event.code == "4103"
 
