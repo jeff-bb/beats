@@ -15,7 +15,22 @@ processors:
       if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'windows powershell'
   - pipeline:
       name: '{< IngestPipeline "powershell_operational" >}'
-      if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'microsoft-windows-powershell/operational'
+      if: ctx.winlog?.channel instanceof String && (ctx.winlog.channel.toLowerCase() == 'microsoft-windows-powershell/operational' || ctx.winlog.channel.toLowerCase() == 'powershellcore/operational')
+  - pipeline:
+      name: '{< IngestPipeline "applocker" >}'
+      if: ctx.winlog?.provider_name instanceof String && ctx.winlog.provider_name.toLowerCase() == 'microsoft-windows-appLocker'
+  - pipeline:
+      name: '{< IngestPipeline "mssql" >}'
+      if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'application' && ctx.winlog.provider_name instanceof String && /mssqlserver|mssql\$.*/.matcher(ctx.winlog.provider_name.toLowerCase()).matches()
+  - pipeline:
+      name: '{< IngestPipeline "system" >}'
+      if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'system' && ['Service Control Manager'].contains(ctx.winlog?.provider_name)
+  - pipeline:
+      name: '{< IngestPipeline "codeintegrity" >}'
+      if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'microsoft-windows-codeintegrity/operational'
+  - pipeline:
+      name: '{< IngestPipeline "bits" >}'
+      if: ctx.winlog?.channel instanceof String && ctx.winlog.channel.toLowerCase() == 'microsoft-windows-bits-client/operational'
   - set:
       field: host.os.type
       value: windows
@@ -24,7 +39,29 @@ processors:
       field: host.os.family
       value: windows
       override: false
-
+  - set:
+      field: user.name
+      copy_from: winlog.user.name
+      ignore_empty_value: true
+      ignore_failure: true
+      if: ctx?.user?.name == null && ctx?.winlog?.user?.name != null
+  - set:
+      field: user.domain
+      copy_from: winlog.user.domain
+      ignore_empty_value: true
+      ignore_failure: true
+      if: ctx?.user?.domain == null && ctx?.winlog?.user?.domain != null
+  - set:
+      field: user.id
+      copy_from: winlog.user.identifier
+      ignore_empty_value: true
+      ignore_failure: true
+      if: ctx?.user?.id == null && ctx?.winlog?.user?.identifier != null
+  - remove:
+      field:
+        - winlog.user
+      ignore_missing: true
+      ignore_failure: true
 on_failure:
   - set:
       field: error.message
