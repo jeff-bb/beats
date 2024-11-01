@@ -1,0 +1,129 @@
+---
+description: Pipeline for Windows Code Integrity events
+processors:
+  - set:
+      field: ecs.version
+      value: 1.12.0
+  - rename:
+      field: winlog.level
+      target_field: log.level
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.level != ""
+  - date:
+      field: winlog.time_created
+      target_field: event.created
+      formats:
+        - ISO8601
+      ignore_failure: true
+      if: ctx?.winlog?.time_created != null
+  - set:
+      field: event.module
+      value: codeintegrity
+  - set:
+      field: event.kind
+      value: event
+  - set:
+      field: event.code
+      value: "{{winlog.event_id}}"
+  - convert:
+      field: winlog.record_id
+      type: string
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      description: Set event category and type for all event types.
+      tag: Add ECS categorization fields
+      lang: painless
+      params:
+        "3004":
+          category:
+            - file
+          type:
+            - info
+          action: file-verify-hash-failed
+        "3033":
+          category:
+            - file
+          type:
+            - denied
+          action: file-verify-requirements-failed
+      source: |-
+        if (ctx?.event?.code == null || params.get(ctx.event.code) == null) {
+          return;
+        }
+        def hm = new HashMap(params[ctx.event.code]);
+        hm.forEach((k, v) -> ctx.event[k] = v);
+  - rename:
+      field: winlog.event_data.FileNameBuffer
+      target_field: file.path
+      ignore_failure: true
+      ignore_missing: true
+  - rename:
+      field: winlog.event_data.ProcessNameBuffer
+      target_field: process.executable
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Split file.path into ECS fields
+      description: Split file.path into ECS fields
+      if: ctx.file?.path != null
+      source: |-
+        String filePath = ctx.file.path;
+        int lastSlash = filePath.lastIndexOf('\\');
+
+        if (lastSlash >= 0) {
+          ctx.file.directory = filePath.substring(0, lastSlash);
+          String fileName = filePath.substring(lastSlash + 1);
+
+          ctx.file.name = fileName;
+         
+          int dotIndex = fileName.lastIndexOf('.');
+          if (dotIndex >= 0) {
+            ctx.file.extension = fileName.substring(dotIndex + 1);
+          }
+        }
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Split process.executable into ECS fields
+      description: Split process.executable into ECS fields
+      if: ctx.process?.executable != null
+      source: |-
+        String processExecutable = ctx.process.executable;
+        int lastSlash = processExecutable.lastIndexOf('\\');
+
+        if (lastSlash >= 0) {
+          String processName = processExecutable.substring(lastSlash + 1);
+          ctx.process.name = processName;         
+        }
+
+  - remove:
+      field:
+        - _temp
+        - winlog.time_created
+        - winlog.level
+      ignore_missing: true
+      ignore_failure: true
+  - script:
+      description: Remove all empty values from event_data.
+      tag: Remove all empty values from event_data.
+      lang: painless
+      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      if: ctx?.winlog?.event_data != null
+  - remove:
+      description: Remove empty event data.
+      tag: Remove empty event data.
+      field: winlog.event_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.event_data != null && ctx.winlog.event_data.size() == 0
+on_failure:
+  - set:
+      field: error.message
+      value: Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{
+        _ingest.on_failure_processor_tag }}" in pipeline "{{
+        _ingest.on_failure_pipeline }}" failed with message "{{
+        _ingest.on_failure_message }}"

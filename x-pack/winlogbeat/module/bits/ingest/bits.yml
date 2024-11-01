@@ -1,0 +1,209 @@
+---
+description: Pipeline for Windows BITS events
+processors:
+  - set:
+      field: ecs.version
+      value: 1.12.0
+  - rename:
+      field: winlog.level
+      target_field: log.level
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.level != ""
+  - date:
+      field: winlog.time_created
+      target_field: event.created
+      formats:
+        - ISO8601
+      ignore_failure: true
+      if: ctx?.winlog?.time_created != null
+  - set:
+      field: event.module
+      value: bits
+  - set:
+      field: event.kind
+      value: event
+  - set:
+      field: event.code
+      value: "{{winlog.event_id}}"
+  - convert:
+      field: winlog.record_id
+      type: string
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      description: Set event category and type for all event types.
+      tag: Add ECS categorization fields
+      lang: painless
+      params:
+        "3":
+          category:
+            - file
+          type:
+            - creation
+            - start
+          action: new-job
+        "4":
+          category:
+            - file
+          type:
+            - end
+          action: finished-job
+        "5":
+          category:
+            - file
+          type:
+            - end
+          action: cancelled-job
+        "59":
+          category:
+            - session
+          type:
+            - start
+          action: start-transfer
+        "60":
+          category:
+            - session
+          type:
+            - stop
+          action: stop-transfer
+      source: |-
+        if (ctx?.event?.code == null || params.get(ctx.event.code) == null) {
+          return;
+        }
+        def hm = new HashMap(params[ctx.event.code]);
+        hm.forEach((k, v) -> ctx.event[k] = v);
+  - uri_parts:
+      field: "winlog.event_data.url"
+      target_field: "url"
+      ignore_failure: true
+      remove_if_successful: true
+      if: ctx?.winlog?.event_data?.url != null
+  - rename:
+      field: "winlog.event_data.processPath"
+      target_field: "process.executable"
+      ignore_failure: true
+      ignore_missing: true
+  - rename:
+      field: "winlog.event_data.processId"
+      target_field: "process.pid"
+      ignore_failure: true
+      ignore_missing: true
+  - append:
+      field: related.user
+      value: "{{user.name}}"
+      ignore_failure: true
+      allow_duplicates: false
+      if: ctx?.winlog?.event_data?.jobOwner != null
+  - split:
+      field: "winlog.event_data.jobOwner"
+      target_field: "_temp.user_parts"
+      separator: "\\"
+      if: ctx?.winlog?.event_data?.jobOwner != null
+  - set:
+      field: "user.domain"
+      value: "{{_temp.user_parts.0}}"
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?._temp?.user_parts != null && ctx._temp.user_parts.length == 2
+  - set:
+      field: "user.name"
+      value: "{{_temp.user_parts.1}}"
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?._temp?.user_parts != null && ctx._temp.user_parts.length == 2
+  - split:
+      field: "winlog.event_data.User"
+      target_field: "_tempUser.user_parts"
+      separator: "\\"
+      if: ctx?.winlog?.event_data?.User != null
+  - set:
+      field: "user.domain"
+      value: "{{_tempUser.user_parts.0}}"
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?._tempUser?.user_parts != null && ctx._tempUser.user_parts.length == 2
+  - set:
+      field: "user.name"
+      value: "{{_tempUser.user_parts.1}}"
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?._tempUser?.user_parts != null && ctx._tempUser.user_parts.length == 2
+  - append:
+      field: related.user
+      value: "{{user.name}}"
+      ignore_failure: true
+      allow_duplicates: false
+      if: ctx?.user?.name != null && ctx.user.name != ""
+  - rename:
+      field: winlog.event_data.processPath
+      target_field: process.executable
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Split process.executable into ECS fields
+      description: Split process.executable into ECS fields
+      if: ctx.process?.executable != null
+      source: |-
+        String processExecutable = ctx.process.executable;
+        int lastSlash = processExecutable.lastIndexOf('\\');
+
+        if (lastSlash >= 0) {
+          ctx.process.directory = processExecutable.substring(0, lastSlash);
+          String processName = processExecutable.substring(lastSlash + 1);
+          ctx.process.name = processName;         
+        }
+  - rename:
+      field: winlog.event_data.Id
+      target_field: winlog.job.id
+      ignore_failure: true
+      ignore_missing: true
+      if: ctx?.event?.code != null && ["59", "60"].contains(ctx.event.code)
+  - rename:
+      field: winlog.event_data.jobId
+      target_field: winlog.job.id
+      ignore_failure: true
+      ignore_missing: true
+  - rename:
+      field: winlog.event_data.jobTitle
+      target_field: winlog.job.name
+      ignore_failure: true
+      ignore_missing: true
+  - rename:
+      field: winlog.event_data.name
+      target_field: winlog.job.name
+      ignore_failure: true
+      ignore_missing: true
+      if: ctx?.event?.code != null && ["59", "60"].contains(ctx.event.code)
+  - remove:
+      field:
+        - _temp
+        - _tempUser
+        - winlog.event_data.jobOwner
+        - winlog.event_data.User
+        - winlog.time_created
+        - winlog.level
+      ignore_missing: true
+      ignore_failure: true
+  - script:
+      description: Remove all empty values from event_data.
+      tag: Remove all empty values from event_data.
+      lang: painless
+      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      if: ctx?.winlog?.event_data != null
+  - remove:
+      description: Remove empty event data.
+      tag: Remove empty event data.
+      field: winlog.event_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.event_data != null && ctx.winlog.event_data.size() == 0
+on_failure:
+  - set:
+      field: error.message
+      value: Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{
+        _ingest.on_failure_processor_tag }}" in pipeline "{{
+        _ingest.on_failure_pipeline }}" failed with message "{{
+        _ingest.on_failure_message }}"

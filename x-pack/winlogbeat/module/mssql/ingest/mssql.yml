@@ -1,0 +1,170 @@
+---
+description: Pipeline for Windows MSSQL events
+processors:
+  - set:
+      field: ecs.version
+      value: 1.12.0
+  - rename:
+      field: winlog.level
+      target_field: log.level
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.level != ""
+  - date:
+      field: winlog.time_created
+      target_field: event.created
+      formats:
+        - ISO8601
+      ignore_failure: true
+      if: ctx?.winlog?.time_created != null
+  - set:
+      field: event.module
+      value: mssql
+  - set:
+      field: event.kind
+      value: event
+  - set:
+      field: event.code
+      value: "{{winlog.event_id}}"
+  - convert:
+      field: winlog.record_id
+      type: string
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      description: Set event category and type for all event types.
+      tag: Add ECS categorization fields
+      lang: painless
+      params:
+        "18452":
+          category:
+            - authentication
+          type:
+            - start
+          action: untrusted-domain-login-failed
+        "18453":
+          category:
+            - authentication
+          type:
+            - start
+          action: integrated-auth-logged-in
+        "18454":
+          category:
+            - authentication
+          type:
+            - start
+          action: sql-auth-logged-in
+        "18456":
+          category:
+            - authentication
+          type:
+            - start
+          action: login-failed
+      source: |-
+        if (ctx?.event?.code == null || params.get(ctx.event.code) == null) {
+          return;
+        }
+        def hm = new HashMap(params[ctx.event.code]);
+        hm.forEach((k, v) -> ctx.event[k] = v);
+  - grok:
+      field: winlog.event_data.param1
+      patterns: [" \\[CLIENT: %{IP:source.ip}\\]"]
+      ignore_failure: true
+      if: ctx?.event?.code != null && ctx.event?.code == '18452'
+  - grok:
+      field: winlog.event_data.param2
+      patterns: [" \\[CLIENT: %{IP:source.ip}\\]"]
+      ignore_failure: true
+      if: ctx?.event?.code != null && ["18453", "18454"].contains(ctx.event.code)
+  - grok:
+      field: winlog.event_data.param3
+      patterns: [" \\[CLIENT: %{IP:source.ip}\\]"]
+      ignore_failure: true
+      if: ctx?.event?.code != null && ctx.event?.code == '18456'
+  - grok:
+      field: winlog.event_data.param2
+      patterns: [" Reason: %{GREEDYDATA:winlog.logon.failure.reason}"]
+      ignore_failure: true
+      if: ctx?.event?.code != null && ctx.event?.code == '18456'
+  - script:
+      description: Parse user information from param.
+      tag: Parse user information from param.
+      lang: painless
+      if: ctx?.event?.code != null && ["18453", "18454", "18456"].contains(ctx.event.code)
+      source: |-
+        // The user who authenticated always reports in the param and is sometimes missing
+        // or wrong in the winlog.user.* fields.
+
+        def userName = ctx.winlog?.user?.name;
+        def param1 = ctx.winlog?.event_data?.param1;
+
+        if (userName == null && param1 != null) {
+          String[] parts = param1.splitOnToken('\\');
+          if (parts.length == 2) {
+            if (ctx?.user == null) {
+              HashMap hm = new HashMap();
+              ctx.put("user", hm);
+            }
+            ctx.user = ['domain': parts[0], 'name': parts[1]];
+          } else if (parts.length == 1) {
+            if (ctx?.user == null) {
+              HashMap hm = new HashMap();
+              ctx.put("user", hm);
+            }
+            ctx.user = ['name': parts[0].toLowerCase()];
+          }
+        }
+  - rename:
+      if: ctx?.event?.code != null && ["18453", "18454", "18456"].contains(ctx.event.code)
+      field: winlog.user.name
+      target_field: user.name
+      ignore_missing: true
+      ignore_failure: true
+  - rename:
+      if: ctx?.event?.code != null && ["18453", "18454", "18456"].contains(ctx.event.code)
+      field: winlog.user.domain
+      target_field: user.domain
+      ignore_missing: true
+      ignore_failure: true
+  - rename:
+      if: ctx?.event?.code != null && ["18453", "18454", "18456"].contains(ctx.event.code)
+      field: winlog.user.identifier
+      target_field: user.id
+      ignore_missing: true
+      ignore_failure: true
+  - remove:
+      if: ctx?.event?.code != null && ["18452", "18453", "18454", "18456"].contains(ctx.event.code)
+      field:
+        - winlog.event_data.param1
+        - winlog.event_data.param2
+        - winlog.event_data.param3
+      ignore_missing: true
+      ignore_failure: true
+  - remove:
+      field:
+        - winlog.event_data.Binary
+        - _temp
+        - winlog.time_created
+        - winlog.level
+      ignore_missing: true
+      ignore_failure: true
+  - script:
+      description: Remove all empty values from event_data.
+      tag: Remove all empty values from event_data.
+      lang: painless
+      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      if: ctx?.winlog?.event_data != null
+  - remove:
+      description: Remove empty event data.
+      tag: Remove empty event data.
+      field: winlog.event_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.event_data != null && ctx.winlog.event_data.size() == 0
+on_failure:
+  - set:
+      field: error.message
+      value: Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{
+        _ingest.on_failure_processor_tag }}" in pipeline "{{
+        _ingest.on_failure_pipeline }}" failed with message "{{
+        _ingest.on_failure_message }}"

@@ -1,0 +1,172 @@
+---
+description: Pipeline for Windows System Event Logs
+processors:
+## ECS and Event fields.
+
+  - set:
+      field: ecs.version
+      value: '1.12.0'
+  - rename:
+      field: winlog.level
+      target_field: log.level
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.level != ""
+  - date:
+      field: winlog.time_created
+      target_field: event.created
+      formats:
+        - ISO8601
+      ignore_failure: true
+      if: ctx?.winlog?.time_created != null
+
+  - set:
+      field: event.module
+      value: system
+  - set:
+      field: event.kind
+      value: event
+  - set:
+      field: event.code
+      value: '{{winlog.event_id}}'
+  - convert:
+      field: winlog.record_id
+      type: string
+      ignore_failure: true 
+      ignore_missing: true
+  - script:
+      description: Set event category and type for all event types.
+      tag: Add ECS categorization fields
+      lang: painless
+      params:
+        "7045":
+          category:
+            - configuration
+          type:
+            - creation
+          action: service-created
+      source: |-
+        if (ctx?.event?.code == null || params.get(ctx.event.code) == null) {
+          return;
+        }
+        def hm = new HashMap(params[ctx.event.code]);
+        hm.forEach((k, v) -> ctx.event[k] = v);
+
+  - rename:
+      field: winlog.event_data.ServiceName
+      target_field: service.name
+      ignore_failure: true
+      ignore_missing: true
+      if: ctx?.event?.code == '7045'
+
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Clean up ImagePath field
+      description: Remove quotes from winlog.event_data.ImagePath before renaming to service.file.path
+      if: ctx?.event?.code == '7045' && ctx.winlog?.event_data?.ImagePath != null
+      source: |-
+        String imagePath = ctx.winlog.event_data.ImagePath;
+
+        if (imagePath.startsWith("\"") && imagePath.endsWith("\"")) {
+          imagePath = imagePath.substring(1, imagePath.length() - 1);
+        }
+
+        if (ctx.service == null) {
+          ctx.service = new HashMap();
+        }
+
+        if (ctx.service.file == null) {
+          ctx.service.file = new HashMap();
+        }
+
+        ctx.service.file.path = imagePath;
+        ctx.winlog.event_data.remove('ImagePath');
+
+  - rename:
+      field: winlog.event_data.ServiceType
+      target_field: service.type
+      ignore_failure: true
+      ignore_missing: true
+      if: ctx?.event?.code == '7045'
+
+  - rename:
+      field: winlog.event_data.AccountName
+      target_field: service.user
+      ignore_failure: true
+      ignore_missing: true
+      if: ctx?.event?.code == '7045'
+
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Map service start types
+      description: Rename StartType to service.start and map to ECS-compliant values
+      if: ctx?.event?.code == '7045' && ctx.winlog?.event_data?.StartType != null
+      source: |-
+        if (ctx.service == null) {
+          ctx.service = new HashMap();
+        }
+
+        if (ctx.winlog.event_data.StartType == 'auto start') {
+          ctx.service.start = 'auto';
+        } else if (ctx.winlog.event_data.StartType == 'boot start') {
+          ctx.service.start = 'boot';
+        } else if (ctx.winlog.event_data.StartType == 'system start') {
+          ctx.service.start = 'system';
+        } else if (ctx.winlog.event_data.StartType == 'demand start') {
+          ctx.service.start = 'manual';
+        } else {
+          ctx.service.start = ctx.winlog.event_data.StartType;
+        }
+
+        ctx.winlog.event_data.remove('StartType');
+
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Split service.file.path into ECS fields
+      description: Split service.file.path into ECS fields
+      if: ctx.service?.file?.path != null
+      source: |-
+        String filePath = ctx.service.file.path;
+        int lastSlash = filePath.lastIndexOf('\\');
+
+        if (lastSlash >= 0) {
+          ctx.service.file.directory = filePath.substring(0, lastSlash);
+          String fileName = filePath.substring(lastSlash + 1);
+
+          ctx.service.file.name = fileName;
+         
+          int dotIndex = fileName.lastIndexOf('.');
+          if (dotIndex >= 0) {
+            ctx.service.file.extension = fileName.substring(dotIndex + 1);
+          }
+        }
+
+## Cleanup
+
+  - remove:
+      field:
+        - _temp
+        - winlog.time_created
+        - winlog.level
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      description: Remove all empty values from event_data.
+      lang: painless
+      source: ctx.winlog?.event_data?.entrySet().removeIf(entry -> [null, "", "-", "{00000000-0000-0000-0000-000000000000}"].contains(entry.getValue()))
+      if: ctx.winlog?.event_data != null
+  - remove:
+      description: Remove empty event data.
+      field: winlog.event_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.event_data != null && ctx.winlog.event_data.size() == 0
+
+on_failure:
+  - set:
+      field: "error.message"
+      value: |-
+        Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{ _ingest.on_failure_processor_tag }}" in pipeline "{{ _ingest.on_failure_pipeline }}" failed with message "{{ _ingest.on_failure_message }}"
