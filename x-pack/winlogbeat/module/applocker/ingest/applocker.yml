@@ -1,0 +1,332 @@
+---
+description: Pipeline for Windows AppLocker events
+processors:
+  - set:
+      field: ecs.version
+      value: 1.12.0
+  - rename:
+      field: winlog.level
+      target_field: log.level
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.level != ""
+  - date:
+      field: winlog.time_created
+      target_field: event.created
+      formats:
+        - ISO8601
+      ignore_failure: true
+      if: ctx?.winlog?.time_created != null
+  - set:
+      field: event.module
+      value: applocker
+  - set:
+      field: event.kind
+      value: event
+  - set:
+      field: event.code
+      value: "{{winlog.event_id}}"
+  - convert:
+      field: winlog.record_id
+      type: string
+      ignore_failure: true
+      ignore_missing: true
+  - script:
+      description: Set event category and type for all event types.
+      lang: painless
+      params:
+        "8000":
+          category:
+            - configuration
+          type:
+            - error
+          action: appid-policy-conversion-failed
+        "8001":
+          category:
+            - configuration
+          type:
+            - change
+          action: appid-policy-applied
+        "8002":
+          category:
+            - process
+          type:
+            - start
+          action: executable-file-allowed
+        "8003":
+          category:
+            - process
+          type:
+            - start
+          action: executable-file-audited
+        "8004":
+          category:
+            - process
+          type:
+            - error
+          action: executable-file-blocked
+        "8005":
+          category:
+            - process
+            - package
+          type:
+            - start
+          action: msi-file-allowed
+        "8006":
+          category:
+            - process
+            - package
+          type:
+            - start
+          action: msi-file-audited
+        "8007":
+          category:
+            - process
+            - package
+          type:
+            - error
+          action: msi-file-blocked
+        "8008":
+          category:
+            - configuration
+          type:
+            - error
+          action: invalid-sku
+        "8020":
+          category:
+            - process
+          type:
+            - start
+          action: package-allowed
+        "8021":
+          category:
+            - process
+          type:
+            - start
+          action: package-audited
+        "8022":
+          category:
+            - process
+          type:
+            - error
+          action: package-blocked
+        "8023":
+          category:
+            - package
+          type:
+            - start
+          action: package-install-allowed
+        "8024":
+          category:
+            - package
+          type:
+            - start
+          action: package-install-audited
+        "8025":
+          category:
+            - package
+          type:
+            - error
+          action: package-install-blocked
+        "8027":
+          category:
+            - process
+          type:
+            - error
+          action: no-package-apps
+        "8028":
+          category:
+            - process
+          type:
+            - start
+          action: code-integrity-audited
+        "8029":
+          category:
+            - process
+          type:
+            - error
+          action: code-integrity-blocked
+        "8036":
+          category:
+            - process
+          type:
+            - error
+          action: code-integrity-blocked
+        "8037":
+          category:
+            - process
+          type:
+            - start
+          action: code-integrity-allowed
+        "8039":
+          category:
+            - process
+          type:
+            - start
+          action: code-integrity-package-family-audited
+        "8040":
+          category:
+            - process
+          type:
+            - error
+          action: code-integrity-package-family-blocked
+      tag: Add ECS categorization fields
+      source: |-
+        if (ctx?.event?.code == null || params.get(ctx.event.code) == null) {
+          return;
+        }
+        def hm = new HashMap(params[ctx.event.code]);
+        hm.forEach((k, v) -> ctx.event[k] = v);
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Copy User Info
+      description: Copy User Info
+      source: >-
+        if (ctx?.event?.code == null ||
+            !["8002", "8004", "8005", "8007", "8020", "8023"].contains(ctx.event.code)) {
+          return;
+        }
+
+        def targetUser = ctx?.winlog?.user_data?.TargetUser;
+
+        if (targetUser != null) {
+          if (ctx?.user == null) {
+            HashMap hm = new HashMap();
+            ctx.put("user", hm);
+          }
+          if (ctx?.user?.id == null) {
+            ctx.user.put("id", targetUser);
+          }
+        }
+  - lowercase:
+      field: winlog.user_data.FileHash
+      target_field: file.hash.sha256
+      ignore_missing: true
+      ignore_failure: true
+  - rename:
+      field: winlog.user_data.FullFilePath
+      target_field: file.path
+      ignore_missing: true
+  - rename:
+      field: winlog.user_data.FilePath
+      target_field: file.path
+      ignore_missing: true
+      if: ctx?.file?.path == null
+  - script:
+      description: Adds file information.
+      lang: painless
+      if: ctx?.file?.path != null && ctx.file.path.length() > 1
+      source: |-
+        def path = ctx.file.path;
+        def idx = path.lastIndexOf("\\");
+        if (idx > -1) {
+            if (ctx?.file == null) {
+                ctx.file = new HashMap();
+            }
+            ctx.file.name = path.substring(idx+1);
+            ctx.file.directory = path.substring(0, idx);
+
+            def extIdx = path.lastIndexOf(".");
+            if (extIdx > -1) {
+                ctx.file.extension = path.substring(extIdx+1);
+            }
+        }
+  - set:
+      field: process.executable
+      copy_from: file.path
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.event?.code != null && ["8002", "8003", "8004"].contains(ctx.event.code)
+  - set:
+      field: process.name
+      copy_from: file.name
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.event?.code != null && ["8002", "8003",
+        "8004"].contains(ctx.event.code)
+  - set:
+      field: process.name
+      copy_from: winlog.user_data.Package
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.event?.code != null && ["8020", "8023"].contains(ctx.event.code)
+  - script:
+      lang: painless
+      ignore_failure: false
+      tag: Add Process PID
+      description: Add Process PID
+      if: ctx?.event?.code != null && ["8002", "8003", "8004", "8005", "8007", "8020", "8022", "8023"].contains(ctx.event.code)
+      source: |-
+        if (ctx?.winlog?.user_data?.TargetProcessId != null) {
+          if (ctx?.process == null) {
+            HashMap hm = new HashMap();
+            ctx.put("process", hm);
+          }
+          ctx.process.put("pid", ctx.winlog.user_data.TargetProcessId);
+          ctx.winlog.user_data.remove("TargetProcessId");
+        }
+  - set:
+      field: winlog.logon.id
+      copy_from: winlog.user_data.TargetLogonId
+      ignore_failure: true
+      ignore_empty_value: true
+  - set:
+      field: user.id
+      copy_from: winlog.user.identifier
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.user?.id == null
+  - set:
+      field: user.domain
+      copy_from: winlog.user.domain
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.user?.domain == null
+  - set:
+      field: user.name
+      copy_from: winlog.user.name
+      ignore_failure: true
+      ignore_empty_value: true
+      if: ctx?.user?.name == null
+  - remove:
+      field:
+        - winlog.user_data.FileHash
+        - _temp
+        - winlog.time_created
+        - winlog.level
+      ignore_missing: true
+      ignore_failure: true
+  - remove:
+      description: Remove empty user data.
+      tag: Remove empty user data.
+      field: winlog.user_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.user_data != null && ctx.winlog.user_data.size() == 0
+  - script:
+      description: Remove all empty values from user_data.
+      tag: Remove all empty values from user_data.
+      lang: painless
+      source: ctx?.winlog?.user_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      if: ctx?.winlog?.user_data != null
+  - remove:
+      description: Remove empty event data.
+      tag: Remove empty event data.
+      field: winlog.event_data
+      ignore_missing: true
+      ignore_failure: true
+      if: ctx?.winlog?.event_data != null && ctx.winlog.event_data.size() == 0
+  - script:
+      description: Remove all empty values from event_data.
+      tag: Remove all empty values from event_data.
+      lang: painless
+      source: ctx?.winlog?.event_data?.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().equals(""));
+      if: ctx?.winlog?.event_data != null
+on_failure:
+  - set:
+      field: error.message
+      value: Processor "{{ _ingest.on_failure_processor_type }}" with tag "{{
+        _ingest.on_failure_processor_tag }}" in pipeline "{{
+        _ingest.on_failure_pipeline }}" failed with message "{{
+        _ingest.on_failure_message }}"
