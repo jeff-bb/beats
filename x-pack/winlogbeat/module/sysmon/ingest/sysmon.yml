@@ -901,6 +901,11 @@ processors:
       ignore_failure: true
       ignore_empty_value: true
       if: ctx?._temp?.user_parts != null && ctx._temp.user_parts.size() == 2
+  - rename:
+      field: winlog.event_data.LogonId
+      target_field: winlog.logon.id
+      ignore_missing: true
+      ignore_failure: true
 
 ## Sysmon fields
 
